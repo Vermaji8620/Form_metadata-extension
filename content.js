@@ -1,72 +1,74 @@
-// content.js
 let cache = null;
 let lastScanTime = 0;
 let isStale = true;
 
 const observer = new MutationObserver(() => {
-    isStale = true;                    // Any DOM change = cache invalid
+  isStale = true;
 });
 observer.observe(document.documentElement, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ['value', 'disabled', 'required'] // only fields we care about
+  childList: true,
+  subtree: true,
+  attributes: true,
+  attributeFilter: ['value', 'disabled', 'required', 'placeholder']
 });
 
-// FAST SCAN – this is the 30 ms target function
 function scanFieldsFast() {
-    const start = performance.now();
+  const start = performance.now();
 
-    const elements = document.querySelectorAll('input, textarea, select');
-    const fields = [];
+  const elements = document.querySelectorAll('input, textarea, select');
+  const fields = [];
 
-    for (const el of elements) {
-        fields.push({
-            tag: el.tagName.toLowerCase(),
-            type: el.type || (el.tagName === 'TEXTAREA' ? 'textarea' : ''),
-            name: el.name || '',
-            id: el.id || '',
-            accept: el.accept || '',
-            minLength: el.minLength ?? 0,
-            maxLength: el.maxLength ?? 0,
-            required: el.required || false,
-            pattern: el.pattern || '',
-            multiple: el.multiple || false,
-            disabled: el.disabled || false,
-            readOnly: el.readOnly || false,
-            // Select-specific
-            optionsCount: el.tagName === 'SELECT' ? el.options.length : 0
-        });
-    }
-
-    const durationMs = Number((performance.now() - start).toFixed(2));
-
-    const result = {
-        total: fields.length,
-        durationMs,
-        under30ms: durationMs < 30,
-        fields
+  for (const el of elements) {
+    const field = {
+      tag: el.tagName.toLowerCase(),
+      type: el.type || (el.tagName === 'TEXTAREA' ? 'textarea' : ''),
+      name: el.name || '',
+      id: el.id || '',
+      accept: el.accept || '',
+      minLength: el.minLength ?? 0,
+      maxLength: el.maxLength ?? 0,
+      required: el.required || false,
+      pattern: el.pattern || '',
+      multiple: el.multiple || false,
+      disabled: el.disabled || false,
+      readOnly: el.readOnly || false,
+      placeholder: el.placeholder || '',
+      value: el.value || '',                    // Current entered value
+      optionsCount: el.tagName === 'SELECT' ? el.options.length : 0
     };
 
-    // Update cache
-    cache = result;
-    lastScanTime = Date.now();
-    isStale = false;
+    // For select: capture all option texts
+    if (el.tagName === 'SELECT') {
+      field.options = Array.from(el.options).map(opt => opt.text.trim()).filter(text => text !== '');
+    }
 
-    return result;
+    fields.push(field);
+  }
+
+  const durationMs = Number((performance.now() - start).toFixed(2));
+
+  const result = {
+    total: fields.length,
+    durationMs,
+    under30ms: durationMs < 30,
+    fields
+  };
+
+  cache = result;
+  lastScanTime = Date.now();
+  isStale = false;
+
+  return result;
 }
 
-// Listen for requests from side panel
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === 'scan') {
-        // Return cache if fresh
-        if (!isStale && cache && (Date.now() - lastScanTime < 5000)) {
-            sendResponse(cache);
-            return true;
-        }
-        // Otherwise do fresh fast scan
-        const result = scanFieldsFast();
-        sendResponse(result);
-        return true;
+  if (request.action === 'scan') {
+    if (!isStale && cache && (Date.now() - lastScanTime < 5000)) {
+      sendResponse(cache);
+      return true;
     }
+    const result = scanFieldsFast();
+    sendResponse(result);
+    return true;
+  }
 });
