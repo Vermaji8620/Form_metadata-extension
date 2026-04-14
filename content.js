@@ -1,4 +1,4 @@
-// content.js - Clean & Reliable Two-Way Sync
+// content.js - Final version with text + file input support
 
 let cache = null;
 let lastScanTime = 0;
@@ -11,7 +11,7 @@ observer.observe(document.documentElement, {
   childList: true,
   subtree: true,
   attributes: true,
-  attributeFilter: ['value', 'disabled', 'required', 'placeholder']
+  attributeFilter: ['value', 'disabled', 'required', 'placeholder', 'files']
 });
 
 function scanFieldsFast() {
@@ -41,9 +41,17 @@ function scanFieldsFast() {
       readOnly: el.readOnly || false,
       placeholder: el.placeholder || '',
       value: el.value || '',
-      selector: selector
+      selector: selector,
+      accept: el.accept || '',
+      multiple: el.multiple || false
     };
 
+    // Special handling for file inputs
+    if (el.type === 'file') {
+      field.files = Array.from(el.files || []).map(file => file.name);
+    }
+
+    // Special handling for select
     if (el.tagName === 'SELECT') {
       field.options = Array.from(el.options).map(opt => opt.text.trim()).filter(t => t);
       field.optionsCount = el.options.length;
@@ -67,33 +75,43 @@ function scanFieldsFast() {
   return result;
 }
 
-function updateFieldValue(selector, newValue) {
+function updateFieldValue(selector, newValue, isFileTrigger = false) {
   if (!selector) return { success: false, reason: "No selector" };
 
   const el = document.querySelector(selector);
-  if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) {
-    return { success: false, reason: "Element not found or not editable" };
+  if (!el) return { success: false, reason: "Element not found" };
+
+  if (el.type === 'file') {
+    if (isFileTrigger) {
+      el.click();   // Trigger native file picker
+      return { success: true, action: "file_picker_triggered" };
+    }
+    return { success: false, reason: "Cannot set file value directly" };
   }
 
-  el.value = newValue;
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
+  // For text inputs and textarea
+  if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+    el.value = newValue;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return { success: true };
+  }
 
-  return { success: true };
+  return { success: false, reason: "Not editable" };
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'scan') {
-    const result = (!isStale && cache && (Date.now() - lastScanTime < 8000))
-      ? cache
-      : scanFieldsFast();
+    const result = (!isStale && cache && (Date.now() - lastScanTime < 8000)) 
+                   ? cache 
+                   : scanFieldsFast();
     sendResponse(result);
     return true;
   }
 
   if (request.action === 'updateValue') {
-    const result = updateFieldValue(request.selector, request.value);
-    sendResponse(result);   // Always send a proper object
+    const result = updateFieldValue(request.selector, request.value, request.isFileTrigger || false);
+    sendResponse(result);
     return true;
   }
 });

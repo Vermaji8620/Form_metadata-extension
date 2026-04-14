@@ -1,4 +1,4 @@
-// sidepanel.js - Fixed messaging for value update
+// sidepanel.js - Final version with text editing + file upload support
 
 async function getActiveTab() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -66,7 +66,7 @@ function renderFields(fields, tabId) {
     `;
 
     if (f.name) html += `<div class="attr"><strong>name:</strong> "${escapeHtml(f.name)}"</div>`;
-    if (f.id) html += `<div class="attr"><strong>id:</strong> "${escapeHtml(f.id)}"</div>`;
+    if (f.id)   html += `<div class="attr"><strong>id:</strong> "${escapeHtml(f.id)}"</div>`;
 
     if (f.placeholder) html += `<div class="attr"><strong>placeholder:</strong> "${escapeHtml(f.placeholder)}"</div>`;
 
@@ -75,9 +75,9 @@ function renderFields(fields, tabId) {
     const lengthStr = formatLength(f.minLength, f.maxLength);
     if (lengthStr) html += `<div class="attr"><strong>length:</strong> ${lengthStr}</div>`;
 
-    // Editable field
+    // Text fields - editable
     const isTextField = (f.tag === 'input' && ['text', 'email', 'password', 'number', 'tel', 'url', 'search'].includes(f.type))
-      || f.tag === 'textarea';
+                     || f.tag === 'textarea';
 
     if (isTextField && f.selector) {
       html += `
@@ -89,8 +89,28 @@ function renderFields(fields, tabId) {
                  data-tabid="${tabId}"
                  style="width:100%; padding:8px; background:#2a2a2a; color:#fff; border:1px solid #555; border-radius:4px; margin-top:4px;">
         </div>`;
+    } 
+    // File inputs - show selected files + Choose File button
+    else if (f.type === 'file' && f.selector) {
+      const fileList = f.files && f.files.length > 0 
+        ? f.files.map(name => `📎 ${escapeHtml(name)}`).join('<br>') 
+        : '(No file selected)';
+
+      html += `
+        <div style="margin-top:10px;">
+          <strong style="color:#00ffcc">Selected file${f.multiple ? 's' : ''}:</strong><br>
+          <div style="background:#2a2a2a; padding:8px; border-radius:4px; margin:6px 0; font-size:12px; color:#ddd; min-height:20px;">
+            ${fileList}
+          </div>
+          <button data-selector="${escapeHtml(f.selector)}" 
+                  data-tabid="${tabId}"
+                  style="padding:6px 12px; background:#0066ff; color:white; border:none; border-radius:4px; cursor:pointer; margin-top:4px;">
+            Choose File${f.multiple ? 's' : ''}
+          </button>
+        </div>`;
     }
 
+    // Select options
     if (f.tag === 'select' && f.options) {
       html += `<div class="attr"><strong>options (${f.options.length}):</strong></div>`;
       f.options.forEach(opt => {
@@ -106,6 +126,7 @@ function renderFields(fields, tabId) {
 }
 
 function attachEditListeners() {
+  // Text fields live editing
   document.querySelectorAll('.field input[data-selector]').forEach(inputEl => {
     inputEl.addEventListener('input', async (e) => {
       const selector = e.target.dataset.selector;
@@ -129,9 +150,32 @@ function attachEditListeners() {
       }
     });
   });
+
+  // File input - trigger native file picker
+  document.querySelectorAll('.field button[data-selector]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const selector = e.target.dataset.selector;
+      const tabId = parseInt(e.target.dataset.tabid);
+
+      try {
+        const response = await chrome.tabs.sendMessage(tabId, {
+          action: 'updateValue',
+          selector: selector,
+          isFileTrigger: true
+        });
+
+        if (response && response.action === "file_picker_triggered") {
+          console.log('%cFile picker opened from sidebar', 'color:#00ccff');
+          setTimeout(() => requestScan(), 1200);   // Auto refresh after file selection
+        }
+      } catch (err) {
+        console.error('Failed to trigger file input:', err);
+      }
+    });
+  });
 }
 
-// Init
+// Initialize
 document.addEventListener('DOMContentLoaded', () => {
   requestScan();
 
