@@ -1,3 +1,5 @@
+// sidepanel.js - Fixed messaging for value update
+
 async function getActiveTab() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   return tabs[0];
@@ -7,26 +9,32 @@ async function requestScan() {
   const tab = await getActiveTab();
   try {
     const response = await chrome.tabs.sendMessage(tab.id, { action: 'scan' });
-
     renderSummary(response);
-    renderFields(response.fields);
+    renderFields(response.fields, tab.id);
   } catch (err) {
+    console.error("Scan failed:", err);
     document.getElementById('summary').innerHTML = `
       <div style="color:#ff5555;padding:10px">
         Cannot scan this page.<br>
-        <small>Try refreshing the page or clicking "Refresh Scan".</small>
+        <small>Make sure the page is fully loaded.</small>
       </div>`;
   }
 }
 
 function formatLength(min, max) {
-  const hasMin = min > 0;
-  const hasMax = max > 0;
-
-  if (!hasMin && !hasMax) return null;           // Don't show if both are default
-  if (!hasMin) return `max: ${max}`;
-  if (!hasMax) return `min: ${min}`;
+  if (min <= 0 && max <= 0) return null;
+  if (min <= 0) return `max: ${max}`;
+  if (max <= 0) return `min: ${min}`;
   return `${min} — ${max}`;
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function renderSummary(data) {
@@ -39,11 +47,10 @@ function renderSummary(data) {
       </span><br>
       <small style="color:#888">Cached at ${new Date().toLocaleTimeString()}</small>
     </div>`;
-
   document.getElementById('summary').innerHTML = html;
 }
 
-function renderFields(fields) {
+function renderFields(fields, tabId) {
   const container = document.getElementById('fields');
   container.innerHTML = `<h2 style="margin:0 0 12px 0; font-size:15px; color:#ddd;">
     Detected Fields (${fields.length})
@@ -54,75 +61,86 @@ function renderFields(fields) {
     div.className = 'field';
 
     let html = `
-      <strong>&lt;${f.tag}&gt;</strong> 
-      ${f.type ? `<span style="color:#ffcc00">type="${f.type}"</span>` : ''}
+      <strong>&lt;${escapeHtml(f.tag)}&gt;</strong> 
+      ${f.type ? `<span style="color:#ffcc00">type="${escapeHtml(f.type)}"</span>` : ''}
     `;
 
-    if (f.name) html += `<div class="attr"><strong>name:</strong> <span>"${f.name}"</span></div>`;
-    if (f.id) html += `<div class="attr"><strong>id:</strong> <span>"${f.id}"</span></div>`;
+    if (f.name) html += `<div class="attr"><strong>name:</strong> "${escapeHtml(f.name)}"</div>`;
+    if (f.id) html += `<div class="attr"><strong>id:</strong> "${escapeHtml(f.id)}"</div>`;
 
-    // Placeholder
-    if (f.placeholder && f.placeholder.trim() !== '') {
-      html += `<div class="attr"><strong>placeholder:</strong> <span>"${f.placeholder}"</span></div>`;
-    }
+    if (f.placeholder) html += `<div class="attr"><strong>placeholder:</strong> "${escapeHtml(f.placeholder)}"</div>`;
 
-    // Current Value (very useful!)
-    if (f.value && f.value.trim() !== '') {
-      html += `<div class="attr" style="color:#00ffaa"><strong>value:</strong> <span>"${f.value}"</span></div>`;
-    } else {
-      html += `<div class="attr" style="color:#666"><strong>value:</strong> (empty)</div>`;
-    }
+    if (f.required) html += `<div class="attr required">● required</div>`;
 
-    if (f.required) {
-      html += `<div class="attr required">● required</div>`;
-    }
-
-    // Length (fixed)
     const lengthStr = formatLength(f.minLength, f.maxLength);
-    if (lengthStr) {
-      html += `<div class="attr"><strong>length:</strong> ${lengthStr}</div>`;
+    if (lengthStr) html += `<div class="attr"><strong>length:</strong> ${lengthStr}</div>`;
+
+    // Editable field
+    const isTextField = (f.tag === 'input' && ['text', 'email', 'password', 'number', 'tel', 'url', 'search'].includes(f.type))
+      || f.tag === 'textarea';
+
+    if (isTextField && f.selector) {
+      html += `
+        <div style="margin-top:10px;">
+          <strong style="color:#00ffcc">Edit value on page:</strong><br>
+          <input type="${f.type === 'password' ? 'password' : 'text'}" 
+                 value="${escapeHtml(f.value)}" 
+                 data-selector="${escapeHtml(f.selector)}" 
+                 data-tabid="${tabId}"
+                 style="width:100%; padding:8px; background:#2a2a2a; color:#fff; border:1px solid #555; border-radius:4px; margin-top:4px;">
+        </div>`;
     }
 
-    if (f.pattern) {
-      html += `<div class="attr"><strong>pattern:</strong> <span>"${f.pattern}"</span></div>`;
-    }
-
-    // Select Options - Show all options
-    if (f.tag === 'select' && f.options && f.options.length > 0) {
+    if (f.tag === 'select' && f.options) {
       html += `<div class="attr"><strong>options (${f.options.length}):</strong></div>`;
       f.options.forEach(opt => {
-        html += `<div style="margin-left:20px; color:#aaa; font-size:12px;">• ${opt}</div>`;
+        html += `<div style="margin-left:20px;color:#aaa;font-size:12px;">• ${escapeHtml(opt)}</div>`;
       });
-    } else if (f.optionsCount > 0) {
-      html += `<div class="attr"><strong>options:</strong> ${f.optionsCount}</div>`;
     }
-
-    if (f.disabled) html += `<div class="attr" style="color:#888">disabled</div>`;
-    if (f.readOnly) html += `<div class="attr" style="color:#888">readonly</div>`;
 
     div.innerHTML = html;
     container.appendChild(div);
   });
 
-  if (fields.length === 0) {
-    container.innerHTML += `<p style="color:#888; text-align:center; padding:20px;">
-      No form fields found on this page.
-    </p>`;
-  }
+  attachEditListeners();
 }
 
-// Initialize
+function attachEditListeners() {
+  document.querySelectorAll('.field input[data-selector]').forEach(inputEl => {
+    inputEl.addEventListener('input', async (e) => {
+      const selector = e.target.dataset.selector;
+      const tabId = parseInt(e.target.dataset.tabid);
+      const newValue = e.target.value;
+
+      try {
+        const response = await chrome.tabs.sendMessage(tabId, {
+          action: 'updateValue',
+          selector: selector,
+          value: newValue
+        });
+
+        if (response && response.success) {
+          console.log('%cValue updated on page successfully', 'color:#00ff88');
+        } else {
+          console.warn('Update failed:', response?.reason || 'Unknown');
+        }
+      } catch (err) {
+        console.error('Failed to send update message:', err);
+      }
+    });
+  });
+}
+
+// Init
 document.addEventListener('DOMContentLoaded', () => {
   requestScan();
 
   document.getElementById('refresh').addEventListener('click', () => {
     const btn = document.getElementById('refresh');
-    const originalText = btn.textContent;
     btn.textContent = 'Scanning...';
     btn.disabled = true;
-
     requestScan().finally(() => {
-      btn.textContent = originalText;
+      btn.textContent = 'Refresh Scan';
       btn.disabled = false;
     });
   });
