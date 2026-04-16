@@ -1,4 +1,72 @@
-// sidepanel.js - Final version with text editing + file upload support
+// sidepanel.js - Final version with text editing + file upload support + real-time updates
+
+let backgroundPort = null;
+
+// Connect to background script for real-time updates
+function connectToBackground() {
+  try {
+    backgroundPort = chrome.runtime.connect({ name: 'sidepanel' });
+
+    backgroundPort.onMessage.addListener((request) => {
+      if (request.action === 'fieldUpdated') {
+        updateFieldDisplay(request.field);
+      }
+    });
+
+    backgroundPort.onDisconnect.addListener(() => {
+      console.log('%c⚠️ Port disconnected, attempting to reconnect...', 'color: #ffaa00');
+      // Attempt to reconnect after a brief delay
+      setTimeout(() => {
+        connectToBackground();
+      }, 1000);
+    });
+  } catch (err) {
+    console.error('Failed to connect to background:', err);
+    // Retry connection
+    setTimeout(() => {
+      connectToBackground();
+    }, 1000);
+  }
+}
+
+// Update a specific field's display in real-time
+function updateFieldDisplay(field) {
+  if (!field || !field.selector) return;
+
+  // Handle file input fields
+  if (field.type === 'file') {
+    const escapedSelector = field.selector.replace(/"/g, '&quot;').replace(/\\/g, '\\\\');
+    const fileDiv = document.querySelector(`[data-file-selector="${escapedSelector}"]`);
+    
+    if (fileDiv) {
+      if (field.files && field.files.length > 0) {
+        const fileList = field.files.map(name => `📎 ${escapeHtml(name)}`).join('<br>');
+        fileDiv.innerHTML = fileList;
+        console.log(`%cFile field updated: ${field.selector}`, 'color: #00ffaa');
+      } else {
+        fileDiv.innerHTML = '(No file selected)';
+      }
+      return;
+    }
+  }
+
+  // Handle text input fields
+  const inputs = document.querySelectorAll('.field input[data-selector]');
+  for (const input of inputs) {
+    if (input.dataset.selector === field.selector) {
+      const oldValue = input.value;
+      input.value = field.value || '';
+      
+      // Only log if value changed to avoid spam
+      if (oldValue !== input.value) {
+        console.log(`%cField updated: ${field.selector}`, 'color: #00ffaa');
+      }
+      return;
+    }
+  }
+  
+  console.log(`%cField not found in panel yet: ${field.selector}`, 'color: #ffaa00');
+}
 
 async function getActiveTab() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -66,7 +134,7 @@ function renderFields(fields, tabId) {
     `;
 
     if (f.name) html += `<div class="attr"><strong>name:</strong> "${escapeHtml(f.name)}"</div>`;
-    if (f.id)   html += `<div class="attr"><strong>id:</strong> "${escapeHtml(f.id)}"</div>`;
+    if (f.id) html += `<div class="attr"><strong>id:</strong> "${escapeHtml(f.id)}"</div>`;
 
     if (f.placeholder) html += `<div class="attr"><strong>placeholder:</strong> "${escapeHtml(f.placeholder)}"</div>`;
 
@@ -77,7 +145,7 @@ function renderFields(fields, tabId) {
 
     // Text fields - editable
     const isTextField = (f.tag === 'input' && ['text', 'email', 'password', 'number', 'tel', 'url', 'search'].includes(f.type))
-                     || f.tag === 'textarea';
+      || f.tag === 'textarea';
 
     if (isTextField && f.selector) {
       html += `
@@ -89,17 +157,17 @@ function renderFields(fields, tabId) {
                  data-tabid="${tabId}"
                  style="width:100%; padding:8px; background:#2a2a2a; color:#fff; border:1px solid #555; border-radius:4px; margin-top:4px;">
         </div>`;
-    } 
+    }
     // File inputs - show selected files + Choose File button
     else if (f.type === 'file' && f.selector) {
-      const fileList = f.files && f.files.length > 0 
-        ? f.files.map(name => `📎 ${escapeHtml(name)}`).join('<br>') 
+      const fileList = f.files && f.files.length > 0
+        ? f.files.map(name => `📎 ${escapeHtml(name)}`).join('<br>')
         : '(No file selected)';
 
       html += `
         <div style="margin-top:10px;">
           <strong style="color:#00ffcc">Selected file${f.multiple ? 's' : ''}:</strong><br>
-          <div style="background:#2a2a2a; padding:8px; border-radius:4px; margin:6px 0; font-size:12px; color:#ddd; min-height:20px;">
+          <div data-file-selector="${escapeHtml(f.selector)}" style="background:#2a2a2a; padding:8px; border-radius:4px; margin:6px 0; font-size:12px; color:#ddd; min-height:20px;">
             ${fileList}
           </div>
           <button data-selector="${escapeHtml(f.selector)}" 
@@ -166,7 +234,15 @@ function attachEditListeners() {
 
         if (response && response.action === "file_picker_triggered") {
           console.log('%cFile picker opened from sidebar', 'color:#00ccff');
-          setTimeout(() => requestScan(), 1200);   // Auto refresh after file selection
+          // Delay scan to give time for file to be selected
+          setTimeout(() => {
+            requestScan().finally(() => {
+              // Reconnect after scan to ensure port is fresh
+              if (!backgroundPort) {
+                connectToBackground();
+              }
+            });
+          }, 1500);
         }
       } catch (err) {
         console.error('Failed to trigger file input:', err);
@@ -177,6 +253,9 @@ function attachEditListeners() {
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
+  // Connect to background for real-time updates
+  connectToBackground();
+
   requestScan();
 
   document.getElementById('refresh').addEventListener('click', () => {

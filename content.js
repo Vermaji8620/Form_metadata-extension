@@ -100,11 +100,130 @@ function updateFieldValue(selector, newValue, isFileTrigger = false) {
   return { success: false, reason: "Not editable" };
 }
 
+// Real-time field monitoring using event delegation
+function setupFieldMonitoring() {
+  // Use event delegation at document level - survives DOM changes
+  document.removeEventListener('input', handleFieldInput);
+  document.removeEventListener('change', handleFieldChange);
+  
+  document.addEventListener('input', handleFieldInput);
+  document.addEventListener('change', handleFieldChange);
+}
+
+function handleFieldInput(e) {
+  const el = e.target;
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) {
+    notifyFieldChange(el);
+  }
+}
+
+function handleFieldChange(e) {
+  const el = e.target;
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) {
+    notifyFieldChange(el);
+  }
+}
+
+// Special handler for file inputs - they need the change event specifically
+function setupFileInputListeners() {
+  const fileInputs = document.querySelectorAll('input[type="file"]');
+  fileInputs.forEach(el => {
+    // Remove old listener to avoid duplicates
+    el.removeEventListener('change', handleFileInputChange);
+    // Add new listener
+    el.addEventListener('change', handleFileInputChange);
+  });
+}
+
+function handleFileInputChange(e) {
+  const el = e.target;
+  notifyFileChange(el);
+}
+
+function notifyFileChange(el) {
+  let selector = null;
+  if (el.id) {
+    selector = `#${CSS.escape(el.id)}`;
+  } else if (el.name) {
+    selector = `input[name="${CSS.escape(el.name)}"]`;
+  }
+
+  const fileNames = Array.from(el.files || []).map(file => file.name);
+  
+  const fieldData = {
+    tag: 'input',
+    type: 'file',
+    name: el.name || '',
+    id: el.id || '',
+    value: '',
+    selector: selector,
+    files: fileNames
+  };
+
+  console.log(`%cFile(s) selected: ${fileNames.join(', ')}`, 'color: #ffcc00');
+
+  // Send update to background script
+  chrome.runtime.sendMessage({
+    action: 'fieldUpdated',
+    field: fieldData
+  })
+}
+
+function notifyFieldChange(el) {
+  let selector = null;
+  if (el.id) {
+    selector = `#${CSS.escape(el.id)}`;
+  } else if (el.name) {
+    selector = `${el.tagName.toLowerCase()}[name="${CSS.escape(el.name)}"]`;
+  }
+
+  const fieldData = {
+    tag: el.tagName.toLowerCase(),
+    type: el.type || (el.tagName === 'TEXTAREA' ? 'textarea' : ''),
+    name: el.name || '',
+    id: el.id || '',
+    value: el.value || '',
+    selector: selector,
+    files: el.type === 'file' ? Array.from(el.files || []).map(file => file.name) : []
+  };
+
+  // Send update to background script
+  chrome.runtime.sendMessage({
+    action: 'fieldUpdated',
+    field: fieldData
+  }).catch(err => {
+    // Ignore errors if extension context is destroyed
+  });
+}
+
+// Initial setup
+setupFieldMonitoring();
+setupFileInputListeners();
+
+// Re-setup field monitoring when DOM changes significantly
+observer.addCallback?.(() => {
+  // This will automatically fire when fields are added/removed
+  // Event delegation handles the re-attachment
+});
+
+// Re-setup file input listeners when new file inputs are added
+setInterval(() => {
+  setupFileInputListeners();
+}, 2000);
+
+// Also manually re-setup on page visibility change
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    setupFieldMonitoring();
+    setupFileInputListeners();
+  }
+});
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'scan') {
-    const result = (!isStale && cache && (Date.now() - lastScanTime < 8000)) 
-                   ? cache 
-                   : scanFieldsFast();
+    const result = (!isStale && cache && (Date.now() - lastScanTime < 8000))
+      ? cache
+      : scanFieldsFast();
     sendResponse(result);
     return true;
   }
