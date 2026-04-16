@@ -4,8 +4,12 @@
 let sidePanelPort = null;
 let latestTabFields = {};
 
+console.log('%c✅ Form Inspector background service worker ready', 'color: #00ff88; font-weight: bold');
+
 // Store reference to sidepanel port for message relay
 chrome.runtime.onConnect.addListener((port) => {
+  console.log('%c🔌 Port connection attempt:', 'color: #ffaa00', port.name);
+
   if (port.name === 'sidepanel') {
     sidePanelPort = port;
     console.log('%c✅ Sidepanel connected', 'color: #00ff88');
@@ -17,6 +21,7 @@ chrome.runtime.onConnect.addListener((port) => {
         if (latestTabFields[tabId] && Array.isArray(latestTabFields[tabId])) {
           // Send all stored fields
           latestTabFields[tabId].forEach(field => {
+            console.log('%c📤 Sending stored field to sidepanel:', 'color: #00aaff', field);
             port.postMessage({
               action: 'fieldUpdated',
               field: field
@@ -35,9 +40,13 @@ chrome.runtime.onConnect.addListener((port) => {
 
 // Relay field updates from content script to sidepanel
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  console.log('%c📨 Background received message:', 'color: #00aaff', request, 'from:', sender);
+
   if (request.action === 'fieldUpdated') {
     const tabId = sender.tab?.id;
     if (tabId) {
+      console.log('%c🔄 Processing field update for tab:', 'color: #ffaa00', tabId);
+
       // Store the latest field data
       if (!latestTabFields[tabId]) {
         latestTabFields[tabId] = [];
@@ -53,10 +62,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
       // Relay to sidepanel if connected
       if (sidePanelPort) {
+        console.log('%c📤 Relaying field update to sidepanel:', 'color: #00ffaa', request.field);
         sidePanelPort.postMessage({
           action: 'fieldUpdated',
           field: request.field
         });
+      } else {
+        console.log('%c⚠️ Sidepanel not connected, field update stored', 'color: #ffaa00');
       }
     }
   }

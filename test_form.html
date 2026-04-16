@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Form Validation Test</title>
+</head>
+<body>
+    <h1>Form Validation Test</h1>
+
+    <form>
+        <!-- Text input with length constraints -->
+        <label>Username (3-20 chars, required):</label><br>
+        <input type="text" name="username" minlength="3" maxlength="20" required placeholder="Enter username"><br><br>
+
+        <!-- Email input -->
+        <label>Email (required):</label><br>
+        <input type="email" name="email" required placeholder="user@example.com"><br><br>
+
+        <!-- Password -->
+        <label>Password (min 8 chars):</label><br>
+        <input type="password" name="password" minlength="8" placeholder="Enter password"><br><br>
+
+        <!-- Number input with constraints -->
+        <label>Age (18-100):</label><br>
+        <input type="number" name="age" min="18" max="100" step="1"><br><br>
+
+        <!-- URL input -->
+        <label>Website:</label><br>
+        <input type="url" name="website" placeholder="https://example.com"><br><br>
+
+        <!-- Phone input -->
+        <label>Phone:</label><br>
+        <input type="tel" name="phone" placeholder="+1-555-123-4567"><br><br>
+
+        <!-- Textarea -->
+        <label>Comments:</label><br>
+        <textarea name="comments" maxlength="500" placeholder="Enter your comments"></textarea><br><br>
+
+        <!-- File input with accept -->
+        <label>Upload PDF or Image:</label><br>
+        <input type="file" name="document" accept=".pdf,image/*"><br><br>
+
+        <!-- Select dropdown -->
+        <label>Country:</label><br>
+        <select name="country" required>
+            <option value="">Select country</option>
+            <option value="us">United States</option>
+            <option value="ca">Canada</option>
+            <option value="uk">United Kingdom</option>
+        </select><br><br>
+
+        <!-- Date input -->
+        <label>Birth Date:</label><br>
+        <input type="date" name="birthdate" max="2005-12-31"><br><br>
+
+        <button type="submit">Submit</button>
+    </form>
+</body>
+</html>

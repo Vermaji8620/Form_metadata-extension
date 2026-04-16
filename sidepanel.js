@@ -2,6 +2,15 @@
 
 let backgroundPort = null;
 
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // Connect to background script for real-time updates
 function connectToBackground() {
   try {
@@ -75,8 +84,35 @@ async function getActiveTab() {
 
 async function requestScan() {
   const tab = await getActiveTab();
+  console.log('%c🔍 Attempting to scan tab:', 'color: #ffaa00', tab);
+
   try {
+    // First check if content script is loaded
+    console.log('%c🔍 Checking if content script is loaded...', 'color: #ffaa00');
+    const testResponse = await chrome.tabs.sendMessage(tab.id, { action: 'ping' });
+    console.log('%c✅ Content script responded to ping:', 'color: #00ff88', testResponse);
+  } catch (pingErr) {
+    console.warn('%c⚠️ Content script not responding to ping, attempting to inject...', 'color: #ffaa00', pingErr);
+
+    // Try to inject content script manually
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['content.js']
+      });
+      console.log('%c✅ Content script injected manually', 'color: #00ff88');
+
+      // Wait a bit for the script to initialize
+      await new Promise(resolve => setTimeout(resolve, 500));
+    } catch (injectErr) {
+      console.error('%c❌ Failed to inject content script:', 'color: #ff5555', injectErr);
+    }
+  }
+
+  try {
+    console.log('%c📤 Sending scan message to content script...', 'color: #00aaff');
     const response = await chrome.tabs.sendMessage(tab.id, { action: 'scan' });
+    console.log('%c📨 Received scan response:', 'color: #00ffaa', response);
     renderSummary(response);
     renderFields(response.fields, tab.id);
   } catch (err) {
@@ -84,7 +120,8 @@ async function requestScan() {
     document.getElementById('summary').innerHTML = `
       <div style="color:#ff5555;padding:10px">
         Cannot scan this page.<br>
-        <small>Make sure the page is fully loaded.</small>
+        <small>Error: ${err.message}</small><br>
+        <small>Make sure the page is fully loaded and content script is injected.</small>
       </div>`;
   }
 }
@@ -96,13 +133,44 @@ function formatLength(min, max) {
   return `${min} — ${max}`;
 }
 
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+function renderValidationRules(rules) {
+  if (!rules || rules.length === 0) return '';
+
+  let html = `<div style="margin-top:8px; padding:8px; background:#1a1a1a; border-radius:4px; border-left:3px solid #ffaa00;">
+    <strong style="color:#ffaa00; font-size:12px;">📋 VALIDATION RULES:</strong><br>`;
+
+  rules.forEach(rule => {
+    const icon = getValidationIcon(rule.type);
+    html += `<div style="margin:4px 0; font-size:11px; color:#ccc;">
+      ${icon} ${escapeHtml(rule.message)}
+    </div>`;
+  });
+
+  html += `</div>`;
+  return html;
+}
+
+function getValidationIcon(type) {
+  const icons = {
+    required: '🔴',
+    minLength: '📏',
+    maxLength: '📐',
+    pattern: '🔍',
+    accept: '📁',
+    min: '⬇️',
+    max: '⬆️',
+    step: '📊',
+    email: '📧',
+    url: '🌐',
+    tel: '📞',
+    password: '🔒',
+    textarea: '📝',
+    select: '📋',
+    autocomplete: '🔄',
+    inputmode: '⌨️',
+    multiple: '➕'
+  };
+  return icons[type] || '⚙️';
 }
 
 function renderSummary(data) {
@@ -153,7 +221,7 @@ function renderFields(fields, tabId) {
           <strong style="color:#00ffcc">Edit value on page:</strong><br>
           <input type="${f.type === 'password' ? 'password' : 'text'}" 
                  value="${escapeHtml(f.value)}" 
-                 data-selector="${escapeHtml(f.selector)}" 
+                 data-selector="${f.selector.replace(/"/g, '&quot;')}" 
                  data-tabid="${tabId}"
                  style="width:100%; padding:8px; background:#2a2a2a; color:#fff; border:1px solid #555; border-radius:4px; margin-top:4px;">
         </div>`;
@@ -167,10 +235,10 @@ function renderFields(fields, tabId) {
       html += `
         <div style="margin-top:10px;">
           <strong style="color:#00ffcc">Selected file${f.multiple ? 's' : ''}:</strong><br>
-          <div data-file-selector="${escapeHtml(f.selector)}" style="background:#2a2a2a; padding:8px; border-radius:4px; margin:6px 0; font-size:12px; color:#ddd; min-height:20px;">
+          <div data-file-selector="${f.selector.replace(/"/g, '&quot;')}" style="background:#2a2a2a; padding:8px; border-radius:4px; margin:6px 0; font-size:12px; color:#ddd; min-height:20px;">
             ${fileList}
           </div>
-          <button data-selector="${escapeHtml(f.selector)}" 
+          <button data-selector="${f.selector.replace(/"/g, '&quot;')}" 
                   data-tabid="${tabId}"
                   style="padding:6px 12px; background:#0066ff; color:white; border:none; border-radius:4px; cursor:pointer; margin-top:4px;">
             Choose File${f.multiple ? 's' : ''}
@@ -186,6 +254,11 @@ function renderFields(fields, tabId) {
       });
     }
 
+    // Add validation rules display
+    if (f.validationRules && f.validationRules.length > 0) {
+      html += renderValidationRules(f.validationRules);
+    }
+
     div.innerHTML = html;
     container.appendChild(div);
   });
@@ -194,12 +267,30 @@ function renderFields(fields, tabId) {
 }
 
 function attachEditListeners() {
-  // Text fields live editing
+  console.log('%c🔗 Attaching edit listeners...', 'color: #ffaa00');
+
+  // Remove existing listeners first to avoid duplicates
   document.querySelectorAll('.field input[data-selector]').forEach(inputEl => {
+    const newInputEl = inputEl.cloneNode(true);
+    inputEl.parentNode.replaceChild(newInputEl, inputEl);
+  });
+
+  document.querySelectorAll('.field button[data-selector]').forEach(btn => {
+    const newBtn = btn.cloneNode(true);
+    btn.parentNode.replaceChild(newBtn, btn);
+  });
+
+  // Text fields live editing
+  const textInputs = document.querySelectorAll('.field input[data-selector]');
+  console.log('%c📝 Found text inputs:', 'color: #00aaff', textInputs.length);
+
+  textInputs.forEach(inputEl => {
     inputEl.addEventListener('input', async (e) => {
       const selector = e.target.dataset.selector;
       const tabId = parseInt(e.target.dataset.tabid);
       const newValue = e.target.value;
+
+      console.log('%c✏️ Text input changed:', 'color: #ffaa00', { selector, tabId, newValue });
 
       try {
         const response = await chrome.tabs.sendMessage(tabId, {
@@ -209,21 +300,26 @@ function attachEditListeners() {
         });
 
         if (response && response.success) {
-          console.log('%cValue updated on page successfully', 'color:#00ff88');
+          console.log('%c✅ Value updated on page successfully', 'color:#00ff88');
         } else {
-          console.warn('Update failed:', response?.reason || 'Unknown');
+          console.warn('❌ Update failed:', response?.reason || 'Unknown');
         }
       } catch (err) {
-        console.error('Failed to send update message:', err);
+        console.error('❌ Failed to send update message:', err);
       }
     });
   });
 
   // File input - trigger native file picker
-  document.querySelectorAll('.field button[data-selector]').forEach(btn => {
+  const fileButtons = document.querySelectorAll('.field button[data-selector]');
+  console.log('%c📁 Found file buttons:', 'color: #00aaff', fileButtons.length);
+
+  fileButtons.forEach(btn => {
     btn.addEventListener('click', async (e) => {
       const selector = e.target.dataset.selector;
       const tabId = parseInt(e.target.dataset.tabid);
+
+      console.log('%c🖱️ File button clicked:', 'color: #ffaa00', { selector, tabId });
 
       try {
         const response = await chrome.tabs.sendMessage(tabId, {
@@ -233,7 +329,7 @@ function attachEditListeners() {
         });
 
         if (response && response.action === "file_picker_triggered") {
-          console.log('%cFile picker opened from sidebar', 'color:#00ccff');
+          console.log('%c✅ File picker opened from sidebar', 'color:#00ccff');
           // Delay scan to give time for file to be selected
           setTimeout(() => {
             requestScan().finally(() => {
@@ -243,9 +339,11 @@ function attachEditListeners() {
               }
             });
           }, 1500);
+        } else {
+          console.warn('❌ File picker trigger failed:', response);
         }
       } catch (err) {
-        console.error('Failed to trigger file input:', err);
+        console.error('❌ Failed to trigger file input:', err);
       }
     });
   });

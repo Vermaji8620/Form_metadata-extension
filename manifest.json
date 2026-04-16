@@ -5,7 +5,8 @@
     "description": "Fast form-field scanner with sidebar (under 30 ms)",
     "permissions": [
         "sidePanel",
-        "activeTab"
+        "activeTab",
+        "scripting"
     ],
     "host_permissions": [
         "<all_urls>"
